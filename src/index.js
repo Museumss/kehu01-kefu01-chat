@@ -353,7 +353,7 @@ async function handleApi(request, env, url, ctx) {
     return json({
       ok: true,
       ts: now(),
-      version: 'v3-2026-11-14',
+      version: 'v3.3-2026-11-21',
       features: ['avatar', 'geo', 'autoReply', 'sound', 'customSound', 'contact', 'pushMulti', 'export', 'embed'],
       storage: env.BUCKET ? 'r2+d1' : 'd1',
     });
@@ -394,6 +394,9 @@ async function handleApi(request, env, url, ctx) {
   if (remarkMatch && method === 'POST') return handleRemark(request, env, remarkMatch[1]);
 
   // 兼容旧接口名
+  const delMatch = path.match(/^\/api\/conversations\/([a-zA-Z0-9_-]+)$/);
+  if (delMatch && method === 'DELETE') return handleDeleteConversation(request, env, delMatch[1]);
+
   const blockMatch = path.match(/^\/api\/conversations\/([a-zA-Z0-9_-]+)\/block$/);
   if (blockMatch && method === 'POST') return handleBlock(request, env, blockMatch[1]);
 
@@ -984,6 +987,38 @@ async function handleConversationList(env) {
   ).all();
 
   return json({ conversations: (results || []).map(mapConv) });
+}
+
+async function handleDeleteConversation(request, env, convId) {
+  const ident = await identify(request, env);
+  if (!ident || ident.role !== 'agent') return fail('未登录', 401, 'unauthorized');
+
+  const body = await safeBody(request);
+  const conv = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(convId).first();
+  if (!conv) return fail('会话不存在或已被删除', 404, 'not_found');
+
+  // 双重确认：前端会传 confirm:true，缺了就不删，防手滑
+  if (!body.confirm) return fail('需要二次确认才能删除会话', 400, 'need_confirm');
+
+  const filesRes = await env.DB.prepare(
+    "SELECT file_key FROM messages WHERE conv_id = ? AND file_key IS NOT NULL AND file_key <> ''"
+  )
+    .bind(convId)
+    .all();
+  const keys = ((filesRes && filesRes.results) || []).map((r) => r.file_key).filter(Boolean);
+  for (const key of keys) await removeStoredFile(env, key);
+
+  const msgs = await env.DB.prepare('DELETE FROM messages WHERE conv_id = ?').bind(convId).run();
+  const convRes = await env.DB.prepare('DELETE FROM conversations WHERE id = ?').bind(convId).run();
+  pushCooldown.delete(convId);
+
+  return json({
+    ok: true,
+    id: convId,
+    messages: (msgs.meta && msgs.meta.changes) || 0,
+    files: keys.length,
+    conversations: (convRes.meta && convRes.meta.changes) || 0,
+  });
 }
 
 async function handleBlock(request, env, convId) {

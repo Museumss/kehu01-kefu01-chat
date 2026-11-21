@@ -1617,3 +1617,13 @@ img {
   color: #b91c1c;
   background: #fef2f2;
 }
+
+/* 删除会话按钮 */
+.agent-pane-head .pane-delete {
+  color: #b91c1c;
+  background: #fef2f2;
+}
+.agent-pane-head .pane-delete:hover {
+  color: #ffffff;
+  background: #dc2626;
+}
